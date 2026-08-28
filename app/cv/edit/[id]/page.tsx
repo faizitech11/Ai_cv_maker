@@ -2,6 +2,8 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import CVPreview from "@/app/components/CVPreview";
 
 interface PersonalInfo {
   fullName?: string;
@@ -97,32 +99,42 @@ const emptyPersonalInfo: PersonalInfo = {
   portfolio: "",
 };
 
+function generateUniqueId() {
+  if (typeof window !== "undefined" && window.crypto && window.crypto.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return `id-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+}
+
 export default function EditCVPage() {
   const params = useParams();
   const router = useRouter();
-
   const id = params.id as string;
 
   const [cv, setCv] = useState<CVData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
   const [title, setTitle] = useState("");
   const [template, setTemplate] = useState("modern");
 
-  const [personalInfo, setPersonalInfo] =
-    useState<PersonalInfo>(emptyPersonalInfo);
-
+  const [personalInfo, setPersonalInfo] = useState<PersonalInfo>(emptyPersonalInfo);
   const [education, setEducation] = useState<Education[]>([]);
   const [experiences, setExperiences] = useState<Experience[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [certifications, setCertifications] = useState<Certification[]>(
-    []
-  );
+  const [certifications, setCertifications] = useState<Certification[]>([]);
   const [languages, setLanguages] = useState<Language[]>([]);
+
+  // AI loading state
+  const [aiLoading, setAiLoading] = useState<string | null>(null);
+
+  // Fullscreen Preview Modal toggle
+  const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
 
   useEffect(() => {
     async function loadCV() {
@@ -131,7 +143,6 @@ export default function EditCVPage() {
         setError("");
 
         const response = await fetch(`/api/cv/${id}`);
-
         const data = await response.json();
 
         if (!response.ok) {
@@ -150,12 +161,24 @@ export default function EditCVPage() {
           ...(loadedCV.personalInfo || {}),
         });
 
-        setEducation(loadedCV.education || []);
-        setExperiences(loadedCV.experiences || []);
-        setSkills(loadedCV.skills || []);
-        setProjects(loadedCV.projects || []);
-        setCertifications(loadedCV.certifications || []);
-        setLanguages(loadedCV.languages || []);
+        setEducation(
+          (loadedCV.education || []).map((item) => ({ ...item, id: item.id || generateUniqueId() }))
+        );
+        setExperiences(
+          (loadedCV.experiences || []).map((item) => ({ ...item, id: item.id || generateUniqueId() }))
+        );
+        setSkills(
+          (loadedCV.skills || []).map((item) => ({ ...item, id: item.id || generateUniqueId() }))
+        );
+        setProjects(
+          (loadedCV.projects || []).map((item) => ({ ...item, id: item.id || generateUniqueId() }))
+        );
+        setCertifications(
+          (loadedCV.certifications || []).map((item) => ({ ...item, id: item.id || generateUniqueId() }))
+        );
+        setLanguages(
+          (loadedCV.languages || []).map((item) => ({ ...item, id: item.id || generateUniqueId() }))
+        );
       } catch {
         setError("Something went wrong while loading the CV.");
       } finally {
@@ -168,8 +191,8 @@ export default function EditCVPage() {
     }
   }, [id]);
 
-  async function handleSave(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function handleSave(e?: FormEvent<HTMLFormElement>) {
+    if (e) e.preventDefault();
 
     setSaving(true);
     setSuccess("");
@@ -203,11 +226,17 @@ export default function EditCVPage() {
       }
 
       setCv(data.cv);
-      setSuccess("CV saved successfully.");
+      const savedTime = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+      setLastSavedAt(savedTime);
+      setSuccess(`CV saved successfully in database at ${savedTime}!`);
 
       setTimeout(() => {
         setSuccess("");
-      }, 3000);
+      }, 5000);
     } catch {
       setError("Something went wrong while saving the CV.");
     } finally {
@@ -215,10 +244,107 @@ export default function EditCVPage() {
     }
   }
 
-  function updatePersonalInfo(
-    field: keyof PersonalInfo,
-    value: string
+  async function handleDownloadPDF() {
+    setDownloadingPdf(true);
+    setError("");
+
+    try {
+      const element = document.getElementById("cv-printable-area");
+      if (!element) {
+        setDownloadingPdf(false);
+        return;
+      }
+
+      const { toJpeg } = await import("html-to-image");
+      const { jsPDF } = await import("jspdf");
+
+      const imgData = await toJpeg(element, {
+        quality: 0.95,
+        pixelRatio: 2,
+        backgroundColor: "#ffffff",
+      });
+
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const elementWidth = element.offsetWidth || 800;
+      const elementHeight = element.offsetHeight || 1130;
+      const pdfHeight = (elementHeight * pdfWidth) / elementWidth;
+
+      pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, pdfHeight);
+
+      const safeTitle = (title || "My_CV").trim().replace(/[^a-zA-Z0-9]/g, "_") || "My_CV";
+      const cleanFileName = `${safeTitle}.pdf`;
+
+      // Generate PDF Blob and trigger direct browser anchor file download
+      const pdfBlob = pdf.output("blob");
+      const blobUrl = URL.createObjectURL(pdfBlob);
+
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.href = blobUrl;
+      downloadAnchor.download = cleanFileName;
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      document.body.removeChild(downloadAnchor);
+
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+
+      setSuccess(`PDF file "${cleanFileName}" downloaded directly to your Downloads folder!`);
+      setTimeout(() => setSuccess(""), 5000);
+    } catch (err: unknown) {
+      console.error("PDF Download error:", err);
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      setError(`Failed to download PDF directly (${errorMessage}).`);
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
+  async function handleAIEnhance(
+    content: string,
+    type: "summary" | "experience" | "project" | "skills" | "general",
+    onSuccess: (enhancedText: string) => void,
+    loadingKey: string
   ) {
+    if (!content.trim()) {
+      setError("Please write some text first before clicking AI Enhance.");
+      return;
+    }
+
+    try {
+      setAiLoading(loadingKey);
+      setError("");
+
+      const response = await fetch("/api/ai/enhance", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content, type }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        setError(data.message || "Failed to generate AI content.");
+        return;
+      }
+
+      onSuccess(data.text);
+      setSuccess("Content successfully enhanced with AI!");
+      setTimeout(() => setSuccess(""), 4000);
+    } catch {
+      setError("Error connecting to AI service.");
+    } finally {
+      setAiLoading(null);
+    }
+  }
+
+  function updatePersonalInfo(field: keyof PersonalInfo, value: string) {
     setPersonalInfo((previous) => ({
       ...previous,
       [field]: value,
@@ -229,6 +355,7 @@ export default function EditCVPage() {
     setEducation((previous) => [
       ...previous,
       {
+        id: generateUniqueId(),
         degree: "",
         institution: "",
         location: "",
@@ -239,30 +366,23 @@ export default function EditCVPage() {
     ]);
   }
 
-  function updateEducation(
-    index: number,
-    field: keyof Education,
-    value: string
-  ) {
+  function updateEducation(index: number, field: keyof Education, value: string) {
     setEducation((previous) =>
       previous.map((item, itemIndex) =>
-        itemIndex === index
-          ? { ...item, [field]: value }
-          : item
+        itemIndex === index ? { ...item, [field]: value } : item
       )
     );
   }
 
   function removeEducation(index: number) {
-    setEducation((previous) =>
-      previous.filter((_, itemIndex) => itemIndex !== index)
-    );
+    setEducation((previous) => previous.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function addExperience() {
     setExperiences((previous) => [
       ...previous,
       {
+        id: generateUniqueId(),
         position: "",
         company: "",
         location: "",
@@ -273,60 +393,39 @@ export default function EditCVPage() {
     ]);
   }
 
-  function updateExperience(
-    index: number,
-    field: keyof Experience,
-    value: string
-  ) {
+  function updateExperience(index: number, field: keyof Experience, value: string) {
     setExperiences((previous) =>
       previous.map((item, itemIndex) =>
-        itemIndex === index
-          ? { ...item, [field]: value }
-          : item
+        itemIndex === index ? { ...item, [field]: value } : item
       )
     );
   }
 
   function removeExperience(index: number) {
-    setExperiences((previous) =>
-      previous.filter((_, itemIndex) => itemIndex !== index)
-    );
+    setExperiences((previous) => previous.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function addSkill() {
-    setSkills((previous) => [
-      ...previous,
-      {
-        name: "",
-        level: "",
-      },
-    ]);
+    setSkills((previous) => [...previous, { id: generateUniqueId(), name: "", level: "" }]);
   }
 
-  function updateSkill(
-    index: number,
-    field: keyof Skill,
-    value: string
-  ) {
+  function updateSkill(index: number, field: keyof Skill, value: string) {
     setSkills((previous) =>
       previous.map((item, itemIndex) =>
-        itemIndex === index
-          ? { ...item, [field]: value }
-          : item
+        itemIndex === index ? { ...item, [field]: value } : item
       )
     );
   }
 
   function removeSkill(index: number) {
-    setSkills((previous) =>
-      previous.filter((_, itemIndex) => itemIndex !== index)
-    );
+    setSkills((previous) => previous.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function addProject() {
     setProjects((previous) => [
       ...previous,
       {
+        id: generateUniqueId(),
         name: "",
         description: "",
         technologies: "",
@@ -337,30 +436,23 @@ export default function EditCVPage() {
     ]);
   }
 
-  function updateProject(
-    index: number,
-    field: keyof Project,
-    value: string
-  ) {
+  function updateProject(index: number, field: keyof Project, value: string) {
     setProjects((previous) =>
       previous.map((item, itemIndex) =>
-        itemIndex === index
-          ? { ...item, [field]: value }
-          : item
+        itemIndex === index ? { ...item, [field]: value } : item
       )
     );
   }
 
   function removeProject(index: number) {
-    setProjects((previous) =>
-      previous.filter((_, itemIndex) => itemIndex !== index)
-    );
+    setProjects((previous) => previous.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function addCertification() {
     setCertifications((previous) => [
       ...previous,
       {
+        id: generateUniqueId(),
         name: "",
         organization: "",
         issueDate: "",
@@ -371,363 +463,117 @@ export default function EditCVPage() {
     ]);
   }
 
-  function updateCertification(
-    index: number,
-    field: keyof Certification,
-    value: string
-  ) {
+  function updateCertification(index: number, field: keyof Certification, value: string) {
     setCertifications((previous) =>
       previous.map((item, itemIndex) =>
-        itemIndex === index
-          ? { ...item, [field]: value }
-          : item
+        itemIndex === index ? { ...item, [field]: value } : item
       )
     );
   }
 
   function removeCertification(index: number) {
-    setCertifications((previous) =>
-      previous.filter((_, itemIndex) => itemIndex !== index)
-    );
+    setCertifications((previous) => previous.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function addLanguage() {
     setLanguages((previous) => [
       ...previous,
-      {
-        name: "",
-        proficiency: "",
-      },
+      { id: generateUniqueId(), name: "", proficiency: "" },
     ]);
   }
 
-  function updateLanguage(
-    index: number,
-    field: keyof Language,
-    value: string
-  ) {
+  function updateLanguage(index: number, field: keyof Language, value: string) {
     setLanguages((previous) =>
       previous.map((item, itemIndex) =>
-        itemIndex === index
-          ? { ...item, [field]: value }
-          : item
+        itemIndex === index ? { ...item, [field]: value } : item
       )
     );
   }
 
   function removeLanguage(index: number) {
-    setLanguages((previous) =>
-      previous.filter((_, itemIndex) => itemIndex !== index)
-    );
+    setLanguages((previous) => previous.filter((_, itemIndex) => itemIndex !== index));
   }
 
-  const PreviewSectionTitle = ({
-    children,
-  }: {
-    children: React.ReactNode;
-  }) => (
-    <h3 className="mb-3 border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wider text-gray-800">
-      {children}
-    </h3>
-  );
+  function handlePrint() {
+    const printElement = document.getElementById("cv-printable-area");
+    if (!printElement) {
+      window.print();
+      return;
+    }
 
-  function CVPreview() {
-    const isClassic = template === "classic";
-    const isProfessional = template === "professional";
-    const isMinimal = template === "minimal";
+    try {
+      const printWindow = window.open("", "_blank", "width=950,height=1150");
+      if (!printWindow) {
+        window.print();
+        return;
+      }
 
-    return (
-      <div
-        className={`mx-auto min-h-[1100px] w-full max-w-[794px] bg-white p-8 text-gray-800 shadow-xl sm:p-10 ${
-          isClassic
-            ? "font-serif"
-            : isProfessional
-            ? "font-sans"
-            : "font-sans"
-        }`}
-      >
-        {isClassic ? (
-          <div className="border-b-2 border-gray-800 pb-5 text-center">
-            <h1 className="text-3xl font-bold">
-              {personalInfo.fullName || "Your Name"}
-            </h1>
+      const styles = Array.from(
+        document.querySelectorAll("style, link[rel='stylesheet']")
+      )
+        .map((node) => node.outerHTML)
+        .join("\n");
 
-            <p className="mt-2 text-lg">
-              {personalInfo.jobTitle || "Professional"}
-            </p>
-
-            <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-gray-600">
-              {personalInfo.email && <span>{personalInfo.email}</span>}
-              {personalInfo.phone && <span>{personalInfo.phone}</span>}
-              {personalInfo.city && <span>{personalInfo.city}</span>}
-              {personalInfo.linkedin && (
-                <span>{personalInfo.linkedin}</span>
-              )}
-              {personalInfo.github && (
-                <span>{personalInfo.github}</span>
-              )}
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <title>${title || "My CV"}</title>
+            ${styles}
+            <style>
+              @page {
+                size: A4 portrait;
+                margin: 0;
+              }
+              body {
+                background: #ffffff !important;
+                color: #000000 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                font-family: Arial, Helvetica, sans-serif;
+              }
+              #cv-printable-area {
+                width: 100% !important;
+                max-width: 100% !important;
+                margin: 0 !important;
+                padding: 12mm !important;
+                box-shadow: none !important;
+                border: none !important;
+                background: #ffffff !important;
+              }
+            </style>
+          </head>
+          <body>
+            <div id="cv-printable-area">
+              ${printElement.innerHTML}
             </div>
-          </div>
-        ) : isProfessional ? (
-          <div className="border-l-8 border-blue-700 pl-5">
-            <h1 className="text-4xl font-extrabold text-blue-800">
-              {personalInfo.fullName || "Your Name"}
-            </h1>
-
-            <p className="mt-1 text-xl font-semibold text-gray-600">
-              {personalInfo.jobTitle || "Professional"}
-            </p>
-
-            <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-600">
-              {personalInfo.email && <span>{personalInfo.email}</span>}
-              {personalInfo.phone && <span>{personalInfo.phone}</span>}
-              {personalInfo.city && <span>{personalInfo.city}</span>}
-              {personalInfo.country && (
-                <span>{personalInfo.country}</span>
-              )}
-            </div>
-          </div>
-        ) : isMinimal ? (
-          <div className="pb-5">
-            <h1 className="text-4xl font-light">
-              {personalInfo.fullName || "Your Name"}
-            </h1>
-
-            <p className="mt-2 text-lg text-gray-500">
-              {personalInfo.jobTitle || "Professional"}
-            </p>
-
-            <div className="mt-3 text-xs text-gray-500">
-              {[personalInfo.email, personalInfo.phone, personalInfo.city]
-                .filter(Boolean)
-                .join(" • ")}
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-xl bg-blue-700 p-6 text-white">
-            <h1 className="text-3xl font-bold">
-              {personalInfo.fullName || "Your Name"}
-            </h1>
-
-            <p className="mt-1 text-lg text-blue-100">
-              {personalInfo.jobTitle || "Professional"}
-            </p>
-
-            <div className="mt-3 flex flex-wrap gap-3 text-xs text-blue-100">
-              {personalInfo.email && <span>{personalInfo.email}</span>}
-              {personalInfo.phone && <span>{personalInfo.phone}</span>}
-              {personalInfo.city && <span>{personalInfo.city}</span>}
-              {personalInfo.country && (
-                <span>{personalInfo.country}</span>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-7 space-y-6">
-          {personalInfo.summary && (
-            <section>
-              <PreviewSectionTitle>Professional Summary</PreviewSectionTitle>
-
-              <p className="whitespace-pre-line text-sm leading-6 text-gray-700">
-                {personalInfo.summary}
-              </p>
-            </section>
-          )}
-
-          {experiences.length > 0 && (
-            <section>
-              <PreviewSectionTitle>Experience</PreviewSectionTitle>
-
-              <div className="space-y-5">
-                {experiences.map((item, index) => (
-                  <div key={item.id || index}>
-                    <div className="flex flex-col justify-between sm:flex-row">
-                      <div>
-                        <h4 className="font-bold">
-                          {item.position || "Position"}
-                        </h4>
-
-                        <p className="text-sm font-medium text-gray-600">
-                          {item.company || "Company"}
-                          {item.location
-                            ? ` • ${item.location}`
-                            : ""}
-                        </p>
-                      </div>
-
-                      <p className="text-xs text-gray-500">
-                        {item.startDate || ""}
-                        {item.startDate || item.endDate ? " - " : ""}
-                        {item.endDate || ""}
-                      </p>
-                    </div>
-
-                    {item.description && (
-                      <p className="mt-2 whitespace-pre-line text-sm leading-5 text-gray-700">
-                        {item.description}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {education.length > 0 && (
-            <section>
-              <PreviewSectionTitle>Education</PreviewSectionTitle>
-
-              <div className="space-y-4">
-                {education.map((item, index) => (
-                  <div key={item.id || index}>
-                    <div className="flex flex-col justify-between sm:flex-row">
-                      <div>
-                        <h4 className="font-bold">
-                          {item.degree || "Degree"}
-                        </h4>
-
-                        <p className="text-sm text-gray-600">
-                          {item.institution || "Institution"}
-                          {item.location
-                            ? ` • ${item.location}`
-                            : ""}
-                        </p>
-                      </div>
-
-                      <p className="text-xs text-gray-500">
-                        {item.startDate || ""}
-                        {item.startDate || item.endDate ? " - " : ""}
-                        {item.endDate || ""}
-                      </p>
-                    </div>
-
-                    {item.description && (
-                      <p className="mt-1 whitespace-pre-line text-sm text-gray-700">
-                        {item.description}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {skills.length > 0 && (
-            <section>
-              <PreviewSectionTitle>Skills</PreviewSectionTitle>
-
-              <div className="flex flex-wrap gap-2">
-                {skills
-                  .filter((item) => item.name)
-                  .map((item, index) => (
-                    <span
-                      key={item.id || index}
-                      className="rounded-md border border-gray-300 px-3 py-1.5 text-xs"
-                    >
-                      {item.name}
-                      {item.level ? ` — ${item.level}` : ""}
-                    </span>
-                  ))}
-              </div>
-            </section>
-          )}
-
-          {projects.length > 0 && (
-            <section>
-              <PreviewSectionTitle>Projects</PreviewSectionTitle>
-
-              <div className="space-y-4">
-                {projects.map((item, index) => (
-                  <div key={item.id || index}>
-                    <h4 className="font-bold">
-                      {item.name || "Project"}
-                    </h4>
-
-                    {item.technologies && (
-                      <p className="text-xs font-medium text-gray-500">
-                        Technologies: {item.technologies}
-                      </p>
-                    )}
-
-                    {item.description && (
-                      <p className="mt-1 whitespace-pre-line text-sm text-gray-700">
-                        {item.description}
-                      </p>
-                    )}
-
-                    {item.projectUrl && (
-                      <p className="mt-1 text-xs text-blue-700">
-                        {item.projectUrl}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {certifications.length > 0 && (
-            <section>
-              <PreviewSectionTitle>Certifications</PreviewSectionTitle>
-
-              <div className="space-y-3">
-                {certifications.map((item, index) => (
-                  <div key={item.id || index}>
-                    <h4 className="font-bold">
-                      {item.name || "Certification"}
-                    </h4>
-
-                    <p className="text-sm text-gray-600">
-                      {item.organization || ""}
-                      {item.issueDate
-                        ? ` • ${item.issueDate}`
-                        : ""}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {languages.length > 0 && (
-            <section>
-              <PreviewSectionTitle>Languages</PreviewSectionTitle>
-
-              <div className="grid grid-cols-2 gap-2">
-                {languages
-                  .filter((item) => item.name)
-                  .map((item, index) => (
-                    <div
-                      key={item.id || index}
-                      className="text-sm"
-                    >
-                      <span className="font-semibold">
-                        {item.name}
-                      </span>
-
-                      {item.proficiency && (
-                        <span className="text-gray-500">
-                          {" "}
-                          — {item.proficiency}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-              </div>
-            </section>
-          )}
-        </div>
-      </div>
-    );
+            <script>
+              window.onload = function() {
+                setTimeout(function() {
+                  window.focus();
+                  window.print();
+                  window.close();
+                }, 300);
+              };
+            </script>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    } catch {
+      window.print();
+    }
   }
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50">
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400 font-sans">
         <div className="text-center">
-          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600" />
-          <p className="text-gray-600">Loading CV...</p>
+          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-800 border-t-indigo-500" />
+          <p>Loading your CV editor...</p>
         </div>
       </main>
     );
@@ -735,13 +581,12 @@ export default function EditCVPage() {
 
   if (error && !cv) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6">
-        <div className="rounded-xl bg-white p-8 text-center shadow">
-          <p className="mb-4 text-red-600">{error}</p>
-
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-100 px-6 font-sans">
+        <div className="rounded-3xl bg-slate-900 border border-slate-800 p-8 text-center max-w-md shadow-2xl">
+          <p className="mb-6 text-red-400 font-medium">{error}</p>
           <button
             onClick={() => router.push("/dashboard")}
-            className="rounded-lg bg-black px-5 py-3 text-white"
+            className="rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 px-6 py-3 text-white font-semibold text-sm shadow-lg shadow-indigo-600/30 hover:from-indigo-500 hover:to-blue-500 transition"
           >
             Back to Dashboard
           </button>
@@ -751,426 +596,444 @@ export default function EditCVPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-100 px-4 py-8">
-      <div className="mx-auto max-w-[1500px]">
-        <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              Edit CV
-            </h1>
+    <main className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white relative overflow-x-hidden">
+      {/* Glow Ambient Effects */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0 no-print">
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 -right-40 w-96 h-96 bg-blue-600/15 rounded-full blur-3xl" />
+      </div>
 
-            <p className="mt-2 text-gray-600">
-              Edit your information and see the CV preview instantly.
-            </p>
+      {/* Header Bar */}
+      <header className="relative z-10 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 no-print">
+        <div className="max-w-[1700px] mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Link
+              href="/dashboard"
+              className="p-2 rounded-xl border border-slate-800 hover:border-slate-700 bg-slate-900/60 text-slate-300 hover:text-white transition text-xs font-semibold flex items-center gap-2"
+            >
+              <span>← Dashboard</span>
+            </Link>
+            <div className="h-6 w-px bg-slate-800" />
+            <div>
+              <h1 className="text-lg font-extrabold text-white truncate max-w-xs sm:max-w-md">
+                {title || "Untitled CV"}
+              </h1>
+              {lastSavedAt && (
+                <p className="text-[10px] text-slate-400">
+                  Last saved: {lastSavedAt}
+                </p>
+              )}
+            </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => router.push("/dashboard")}
-            className="rounded-lg border border-gray-300 bg-white px-5 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            ← Back to Dashboard
-          </button>
-        </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsFullscreenPreview(true)}
+              className="hidden sm:flex px-3 py-2.5 rounded-xl border border-slate-800 bg-slate-900/80 hover:bg-slate-900 text-slate-300 hover:text-white text-xs font-semibold transition items-center gap-2"
+            >
+              <span>🔍 Fullscreen</span>
+            </button>
 
+            {/* Direct Download PDF Button */}
+            <button
+              onClick={handleDownloadPDF}
+              disabled={downloadingPdf}
+              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 transition disabled:opacity-50 flex items-center gap-2"
+            >
+              {downloadingPdf ? (
+                <>
+                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  <span>Generating PDF...</span>
+                </>
+              ) : (
+                <span>📥 Download PDF (.pdf)</span>
+              )}
+            </button>
+
+
+            {/* Save Button */}
+            <button
+              onClick={() => handleSave()}
+              disabled={saving}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition disabled:opacity-50 flex items-center gap-2"
+            >
+              {saving ? (
+                <>
+                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <span>💾 Save CV</span>
+              )}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Save Toast Banner */}
+      <div className="relative z-10 max-w-[1700px] mx-auto px-6 pt-4 no-print">
         {success && (
-          <div className="mb-6 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-green-700">
-            {success}
+          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/15 p-4 text-sm font-semibold text-emerald-300 flex items-center justify-between shadow-xl backdrop-blur-md">
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400 font-bold">✓</span>
+              <div>
+                <p className="font-bold text-white">Success!</p>
+                <p className="text-xs text-emerald-300/80">{success}</p>
+              </div>
+            </div>
+            <button onClick={() => setSuccess("")} className="text-emerald-400 hover:text-white px-2 text-lg">✕</button>
           </div>
         )}
 
         {error && (
-          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-600">
-            {error}
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/15 p-4 text-sm font-semibold text-red-300 flex items-center justify-between shadow-xl backdrop-blur-md">
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-red-500/20 text-red-400 font-bold">⚠️</span>
+              <div>
+                <p className="font-bold text-white">Notice</p>
+                <p className="text-xs text-red-300/80">{error}</p>
+              </div>
+            </div>
+            <button onClick={() => setError("")} className="text-red-400 hover:text-white px-2 text-lg">✕</button>
           </div>
         )}
+      </div>
 
-        <div className="grid items-start gap-8 xl:grid-cols-[560px_minmax(0,1fr)]">
-          <form onSubmit={handleSave} className="space-y-6">
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="mb-5 text-xl font-semibold">
-                CV Settings
+      {/* Main Form + Live Preview Layout Grid */}
+      <main className="relative z-10 max-w-[1700px] mx-auto px-6 py-6">
+        <div className="grid items-start gap-8 lg:grid-cols-12">
+          {/* Left Column: Editor Form */}
+          <form onSubmit={handleSave} className="space-y-6 lg:col-span-6 xl:col-span-6 no-print">
+            {/* Settings & Template Selector Card */}
+            <section className="rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl backdrop-blur-xl">
+              <h2 className="text-lg font-bold text-white mb-5 flex items-center gap-2">
+                <span>⚙️</span>
+                <span>CV Settings & Template Selector</span>
               </h2>
 
-              <div className="space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
                     CV Title
                   </label>
-
                   <input
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-blue-500"
-                    placeholder="My CV"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
+                    placeholder="e.g. Senior Developer CV"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
-                    Template
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                    Choose Template Theme (8 Designs)
                   </label>
-
                   <select
                     value={template}
                     onChange={(e) => setTemplate(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-blue-500"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
                   >
-                    <option value="modern">Modern</option>
-                    <option value="classic">Classic</option>
-                    <option value="professional">
-                      Professional
-                    </option>
-                    <option value="minimal">Minimal</option>
+                    <option value="modern" className="bg-slate-900 text-white">Modern Accent (Indigo Banner)</option>
+                    <option value="classic" className="bg-slate-900 text-white">Classic Serif (Traditional Corporate)</option>
+                    <option value="professional" className="bg-slate-900 text-white">Professional (Left Border Accent)</option>
+                    <option value="minimal" className="bg-slate-900 text-white">Minimal Clean (Generous Whitespace)</option>
+                    <option value="executive" className="bg-slate-900 text-white">Executive (Navy & Amber Gold Bar)</option>
+                    <option value="tech" className="bg-slate-900 text-white">Tech / Developer (Code Pills & Monospace)</option>
+                    <option value="creative" className="bg-slate-900 text-white">Creative Split (Dark Left Sidebar)</option>
+                    <option value="compact" className="bg-slate-900 text-white">Compact One-Page (Dense Grid)</option>
                   </select>
                 </div>
               </div>
             </section>
 
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
-              <h2 className="mb-5 text-xl font-semibold">
-                Personal Information
+            {/* Personal Info Card */}
+            <section className="rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl backdrop-blur-xl">
+              <h2 className="text-lg font-bold text-white mb-5 flex items-center gap-2">
+                <span>👤</span>
+                <span>Personal Information</span>
               </h2>
 
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2">
                 {(
                   [
-                    ["fullName", "Full Name"],
-                    ["jobTitle", "Job Title"],
-                    ["email", "Email"],
-                    ["phone", "Phone"],
-                    ["address", "Address"],
-                    ["city", "City"],
-                    ["country", "Country"],
-                    ["linkedin", "LinkedIn"],
-                    ["github", "GitHub"],
-                    ["portfolio", "Portfolio"],
-                  ] as [keyof PersonalInfo, string][]
-                ).map(([field, label]) => (
+                    ["fullName", "Full Name", "John Doe"],
+                    ["jobTitle", "Job Title", "Full Stack Developer"],
+                    ["email", "Email", "john@example.com"],
+                    ["phone", "Phone Number", "+1 234 567 890"],
+                    ["address", "Address", "123 Main St"],
+                    ["city", "City", "New York"],
+                    ["country", "Country", "United States"],
+                    ["linkedin", "LinkedIn URL", "linkedin.com/in/johndoe"],
+                    ["github", "GitHub URL", "github.com/johndoe"],
+                    ["portfolio", "Portfolio URL", "johndoe.dev"],
+                  ] as [keyof PersonalInfo, string, string][]
+                ).map(([field, label, placeholder]) => (
                   <div key={field}>
-                    <label className="mb-2 block text-sm font-medium">
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
                       {label}
                     </label>
-
                     <input
                       value={personalInfo[field] || ""}
-                      onChange={(e) =>
-                        updatePersonalInfo(
-                          field,
-                          e.target.value
-                        )
-                      }
-                      className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-blue-500"
+                      onChange={(e) => updatePersonalInfo(field, e.target.value)}
+                      placeholder={placeholder}
+                      className="w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
                     />
                   </div>
                 ))}
 
-                <div className="md:col-span-2">
-                  <label className="mb-2 block text-sm font-medium">
-                    Professional Summary
-                  </label>
-
+                <div className="sm:col-span-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      Professional Summary
+                    </label>
+                    <button
+                      type="button"
+                      disabled={aiLoading === "summary"}
+                      onClick={() =>
+                        handleAIEnhance(
+                          personalInfo.summary || "",
+                          "summary",
+                          (enhanced) => updatePersonalInfo("summary", enhanced),
+                          "summary"
+                        )
+                      }
+                      className="px-3 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {aiLoading === "summary" ? (
+                        <>
+                          <div className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent" />
+                          <span>AI Improving...</span>
+                        </>
+                      ) : (
+                        <span>✨ Enhance Summary with AI</span>
+                      )}
+                    </button>
+                  </div>
                   <textarea
                     value={personalInfo.summary || ""}
-                    onChange={(e) =>
-                      updatePersonalInfo(
-                        "summary",
-                        e.target.value
-                      )
-                    }
-                    rows={5}
-                    className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-blue-500"
-                    placeholder="Write a short professional summary..."
+                    onChange={(e) => updatePersonalInfo("summary", e.target.value)}
+                    rows={4}
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
+                    placeholder="Brief overview of your professional background, skills, and key achievements..."
                   />
                 </div>
               </div>
             </section>
 
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
+            {/* Experience Card */}
+            <section className="rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl backdrop-blur-xl">
               <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-xl font-semibold">
-                  Education
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>💼</span>
+                  <span>Work Experience</span>
                 </h2>
-
-                <button
-                  type="button"
-                  onClick={addEducation}
-                  className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-gray-800"
-                >
-                  + Add
-                </button>
-              </div>
-
-              <div className="space-y-5">
-                {education.map((item, index) => (
-                  <div
-                    key={item.id || index}
-                    className="rounded-xl border border-gray-200 p-4"
-                  >
-                    <div className="mb-4 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          removeEducation(index)
-                        }
-                        className="text-sm font-medium text-red-600"
-                      >
-                        Remove
-                      </button>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <input
-                        value={item.degree}
-                        onChange={(e) =>
-                          updateEducation(
-                            index,
-                            "degree",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Degree"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.institution}
-                        onChange={(e) =>
-                          updateEducation(
-                            index,
-                            "institution",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Institution"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.location || ""}
-                        onChange={(e) =>
-                          updateEducation(
-                            index,
-                            "location",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Location"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.startDate || ""}
-                        onChange={(e) =>
-                          updateEducation(
-                            index,
-                            "startDate",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Start Date"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.endDate || ""}
-                        onChange={(e) =>
-                          updateEducation(
-                            index,
-                            "endDate",
-                            e.target.value
-                          )
-                        }
-                        placeholder="End Date"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <textarea
-                        value={item.description || ""}
-                        onChange={(e) =>
-                          updateEducation(
-                            index,
-                            "description",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Description"
-                        className="rounded-lg border border-gray-300 px-4 py-3 md:col-span-2"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
-              <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-xl font-semibold">
-                  Experience
-                </h2>
-
                 <button
                   type="button"
                   onClick={addExperience}
-                  className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-gray-800"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md transition"
                 >
-                  + Add
+                  + Add Experience
                 </button>
               </div>
 
-              <div className="space-y-5">
+              <div className="space-y-6">
                 {experiences.map((item, index) => (
-                  <div
-                    key={item.id || index}
-                    className="rounded-xl border border-gray-200 p-4"
-                  >
-                    <div className="mb-4 flex justify-end">
+                  <div key={item.id || `exp-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
+                        Experience #{index + 1}
+                      </span>
                       <button
                         type="button"
-                        onClick={() =>
-                          removeExperience(index)
-                        }
-                        className="text-sm font-medium text-red-600"
+                        onClick={() => removeExperience(index)}
+                        className="text-xs font-semibold text-red-400 hover:bg-red-500/10 px-3 py-1 rounded-lg transition"
                       >
                         Remove
                       </button>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="grid gap-4 sm:grid-cols-2">
                       <input
                         value={item.position}
-                        onChange={(e) =>
-                          updateExperience(
-                            index,
-                            "position",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Position"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
+                        onChange={(e) => updateExperience(index, "position", e.target.value)}
+                        placeholder="Job Position (e.g. Senior Frontend Engineer)"
+                        className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                       />
-
                       <input
                         value={item.company}
-                        onChange={(e) =>
-                          updateExperience(
-                            index,
-                            "company",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Company"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
+                        onChange={(e) => updateExperience(index, "company", e.target.value)}
+                        placeholder="Company Name (e.g. Acme Corp)"
+                        className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                       />
-
                       <input
                         value={item.location || ""}
-                        onChange={(e) =>
-                          updateExperience(
-                            index,
-                            "location",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Location"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
+                        onChange={(e) => updateExperience(index, "location", e.target.value)}
+                        placeholder="Location (e.g. Remote / New York)"
+                        className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                       />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          value={item.startDate || ""}
+                          onChange={(e) => updateExperience(index, "startDate", e.target.value)}
+                          placeholder="Start (e.g. Jan 2021)"
+                          className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                        />
+                        <input
+                          value={item.endDate || ""}
+                          onChange={(e) => updateExperience(index, "endDate", e.target.value)}
+                          placeholder="End (e.g. Present)"
+                          className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                        />
+                      </div>
 
-                      <input
-                        value={item.startDate || ""}
-                        onChange={(e) =>
-                          updateExperience(
-                            index,
-                            "startDate",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Start Date"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.endDate || ""}
-                        onChange={(e) =>
-                          updateExperience(
-                            index,
-                            "endDate",
-                            e.target.value
-                          )
-                        }
-                        placeholder="End Date"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <textarea
-                        value={item.description || ""}
-                        onChange={(e) =>
-                          updateExperience(
-                            index,
-                            "description",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Description"
-                        className="rounded-lg border border-gray-300 px-4 py-3 md:col-span-2"
-                      />
+                      <div className="sm:col-span-2 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                            Description & Achievements
+                          </label>
+                          <button
+                            type="button"
+                            disabled={aiLoading === `exp-${index}`}
+                            onClick={() =>
+                              handleAIEnhance(
+                                item.description || "",
+                                "experience",
+                                (enhanced) => updateExperience(index, "description", enhanced),
+                                `exp-${index}`
+                              )
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {aiLoading === `exp-${index}` ? (
+                              <span>AI Enhancing...</span>
+                            ) : (
+                              <span>✨ AI Enhance</span>
+                            )}
+                          </button>
+                        </div>
+                        <textarea
+                          value={item.description || ""}
+                          onChange={(e) => updateExperience(index, "description", e.target.value)}
+                          rows={3}
+                          placeholder="Key responsibilities, achievements, and impact..."
+                          className="w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                        />
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
             </section>
 
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
+            {/* Education Card */}
+            <section className="rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl backdrop-blur-xl">
               <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-xl font-semibold">
-                  Skills
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>🎓</span>
+                  <span>Education</span>
                 </h2>
+                <button
+                  type="button"
+                  onClick={addEducation}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md transition"
+                >
+                  + Add Education
+                </button>
+              </div>
 
+              <div className="space-y-6">
+                {education.map((item, index) => (
+                  <div key={item.id || `edu-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
+                        Education #{index + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeEducation(index)}
+                        className="text-xs font-semibold text-red-400 hover:bg-red-500/10 px-3 py-1 rounded-lg transition"
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <input
+                        value={item.degree}
+                        onChange={(e) => updateEducation(index, "degree", e.target.value)}
+                        placeholder="Degree (e.g. B.S. Computer Science)"
+                        className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                      />
+                      <input
+                        value={item.institution}
+                        onChange={(e) => updateEducation(index, "institution", e.target.value)}
+                        placeholder="University / School Name"
+                        className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                      />
+                      <input
+                        value={item.location || ""}
+                        onChange={(e) => updateEducation(index, "location", e.target.value)}
+                        placeholder="Location (e.g. Boston, MA)"
+                        className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          value={item.startDate || ""}
+                          onChange={(e) => updateEducation(index, "startDate", e.target.value)}
+                          placeholder="Start (e.g. 2018)"
+                          className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                        />
+                        <input
+                          value={item.endDate || ""}
+                          onChange={(e) => updateEducation(index, "endDate", e.target.value)}
+                          placeholder="End (e.g. 2022)"
+                          className="rounded-xl bg-slate-950 border border-slate-800 px-3 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Skills Card */}
+            <section className="rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl backdrop-blur-xl">
+              <div className="mb-5 flex items-center justify-between">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>⚡</span>
+                  <span>Skills</span>
+                </h2>
                 <button
                   type="button"
                   onClick={addSkill}
-                  className="rounded-lg bg-black px-4 py-2 text-sm text-white"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md transition"
                 >
-                  + Add
+                  + Add Skill
                 </button>
               </div>
 
               <div className="space-y-3">
                 {skills.map((item, index) => (
                   <div
-                    key={item.id || index}
-                    className="flex flex-col gap-3 sm:flex-row"
+                    key={item.id || `skill-${index}`}
+                    className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center bg-slate-950/60 border border-slate-800/80 p-3 rounded-2xl"
                   >
                     <input
                       value={item.name}
-                      onChange={(e) =>
-                        updateSkill(
-                          index,
-                          "name",
-                          e.target.value
-                        )
-                      }
-                      placeholder="Skill"
-                      className="flex-1 rounded-lg border border-gray-300 px-4 py-3"
+                      onChange={(e) => updateSkill(index, "name", e.target.value)}
+                      placeholder="Skill Name (e.g. React.js, Python)"
+                      className="flex-1 rounded-xl bg-slate-950 border border-slate-800 px-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                     />
-
                     <input
                       value={item.level || ""}
-                      onChange={(e) =>
-                        updateSkill(
-                          index,
-                          "level",
-                          e.target.value
-                        )
-                      }
-                      placeholder="Level"
-                      className="flex-1 rounded-lg border border-gray-300 px-4 py-3"
+                      onChange={(e) => updateSkill(index, "level", e.target.value)}
+                      placeholder="Proficiency Level (e.g. Advanced)"
+                      className="sm:w-48 rounded-xl bg-slate-950 border border-slate-800 px-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                     />
-
                     <button
                       type="button"
                       onClick={() => removeSkill(index)}
-                      className="rounded-lg border border-red-200 px-4 py-3 text-red-600"
+                      className="shrink-0 px-4 py-2.5 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 text-xs font-semibold transition"
                     >
                       Remove
                     </button>
@@ -1179,267 +1042,185 @@ export default function EditCVPage() {
               </div>
             </section>
 
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
+            {/* Projects Card */}
+            <section className="rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl backdrop-blur-xl">
               <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-xl font-semibold">
-                  Projects
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>🚀</span>
+                  <span>Projects</span>
                 </h2>
-
                 <button
                   type="button"
                   onClick={addProject}
-                  className="rounded-lg bg-black px-4 py-2 text-sm text-white"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md transition"
                 >
-                  + Add
+                  + Add Project
                 </button>
               </div>
 
-              <div className="space-y-5">
+              <div className="space-y-6">
                 {projects.map((item, index) => (
-                  <div
-                    key={item.id || index}
-                    className="rounded-xl border border-gray-200 p-4"
-                  >
-                    <div className="mb-4 flex justify-end">
+                  <div key={item.id || `proj-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
+                        Project #{index + 1}
+                      </span>
                       <button
                         type="button"
-                        onClick={() =>
-                          removeProject(index)
-                        }
-                        className="text-sm font-medium text-red-600"
+                        onClick={() => removeProject(index)}
+                        className="text-xs font-semibold text-red-400 hover:bg-red-500/10 px-3 py-1 rounded-lg transition"
                       >
                         Remove
                       </button>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="grid gap-4 sm:grid-cols-2">
                       <input
                         value={item.name}
-                        onChange={(e) =>
-                          updateProject(
-                            index,
-                            "name",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Project Name"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
+                        onChange={(e) => updateProject(index, "name", e.target.value)}
+                        placeholder="Project Title"
+                        className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                       />
-
                       <input
                         value={item.technologies || ""}
-                        onChange={(e) =>
-                          updateProject(
-                            index,
-                            "technologies",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Technologies"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
+                        onChange={(e) => updateProject(index, "technologies", e.target.value)}
+                        placeholder="Tech Stack (e.g. Next.js, TypeScript, Tailwind)"
+                        className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                       />
-
                       <input
                         value={item.projectUrl || ""}
-                        onChange={(e) =>
-                          updateProject(
-                            index,
-                            "projectUrl",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Project URL"
-                        className="rounded-lg border border-gray-300 px-4 py-3 md:col-span-2"
+                        onChange={(e) => updateProject(index, "projectUrl", e.target.value)}
+                        placeholder="Live URL / GitHub repository"
+                        className="sm:col-span-2 rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                       />
-
-                      <textarea
-                        value={item.description || ""}
-                        onChange={(e) =>
-                          updateProject(
-                            index,
-                            "description",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Project Description"
-                        className="rounded-lg border border-gray-300 px-4 py-3 md:col-span-2"
-                      />
+                      <div className="sm:col-span-2 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                            Project Description
+                          </label>
+                          <button
+                            type="button"
+                            disabled={aiLoading === `proj-${index}`}
+                            onClick={() =>
+                              handleAIEnhance(
+                                item.description || "",
+                                "project",
+                                (enhanced) => updateProject(index, "description", enhanced),
+                                `proj-${index}`
+                              )
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {aiLoading === `proj-${index}` ? (
+                              <span>AI Enhancing...</span>
+                            ) : (
+                              <span>✨ AI Enhance</span>
+                            )}
+                          </button>
+                        </div>
+                        <textarea
+                          value={item.description || ""}
+                          onChange={(e) => updateProject(index, "description", e.target.value)}
+                          rows={3}
+                          placeholder="What did you build and what was its impact?"
+                          className="w-full rounded-xl bg-slate-950 border border-slate-800 px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                        />
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
             </section>
 
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
+            {/* Certifications Card */}
+            <section className="rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl backdrop-blur-xl">
               <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-xl font-semibold">
-                  Certifications
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>🏆</span>
+                  <span>Certifications</span>
                 </h2>
-
                 <button
                   type="button"
                   onClick={addCertification}
-                  className="rounded-lg bg-black px-4 py-2 text-sm text-white"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md transition"
                 >
-                  + Add
+                  + Add Certification
                 </button>
               </div>
 
-              <div className="space-y-5">
+              <div className="space-y-4">
                 {certifications.map((item, index) => (
-                  <div
-                    key={item.id || index}
-                    className="rounded-xl border border-gray-200 p-4"
-                  >
-                    <div className="mb-4 flex justify-end">
+                  <div key={item.id || `cert-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 grid gap-3 sm:grid-cols-2">
+                    <input
+                      value={item.name}
+                      onChange={(e) => updateCertification(index, "name", e.target.value)}
+                      placeholder="Certification Name"
+                      className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      value={item.organization || ""}
+                      onChange={(e) => updateCertification(index, "organization", e.target.value)}
+                      placeholder="Issuing Organization (e.g. AWS)"
+                      className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      value={item.issueDate || ""}
+                      onChange={(e) => updateCertification(index, "issueDate", e.target.value)}
+                      placeholder="Issue Date"
+                      className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                    />
+                    <div className="flex justify-end items-center">
                       <button
                         type="button"
-                        onClick={() =>
-                          removeCertification(index)
-                        }
-                        className="text-sm font-medium text-red-600"
+                        onClick={() => removeCertification(index)}
+                        className="text-xs font-semibold text-red-400 hover:bg-red-500/10 px-3 py-1.5 rounded-lg transition"
                       >
                         Remove
                       </button>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <input
-                        value={item.name}
-                        onChange={(e) =>
-                          updateCertification(
-                            index,
-                            "name",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Certification Name"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.organization || ""}
-                        onChange={(e) =>
-                          updateCertification(
-                            index,
-                            "organization",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Organization"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.issueDate || ""}
-                        onChange={(e) =>
-                          updateCertification(
-                            index,
-                            "issueDate",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Issue Date"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.expiryDate || ""}
-                        onChange={(e) =>
-                          updateCertification(
-                            index,
-                            "expiryDate",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Expiry Date"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.credentialId || ""}
-                        onChange={(e) =>
-                          updateCertification(
-                            index,
-                            "credentialId",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Credential ID"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
-
-                      <input
-                        value={item.credentialUrl || ""}
-                        onChange={(e) =>
-                          updateCertification(
-                            index,
-                            "credentialUrl",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Credential URL"
-                        className="rounded-lg border border-gray-300 px-4 py-3"
-                      />
                     </div>
                   </div>
                 ))}
               </div>
             </section>
 
-            <section className="rounded-2xl bg-white p-6 shadow-sm">
+            {/* Languages Card */}
+            <section className="rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl backdrop-blur-xl">
               <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-xl font-semibold">
-                  Languages
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>🌐</span>
+                  <span>Languages</span>
                 </h2>
-
                 <button
                   type="button"
                   onClick={addLanguage}
-                  className="rounded-lg bg-black px-4 py-2 text-sm text-white"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md transition"
                 >
-                  + Add
+                  + Add Language
                 </button>
               </div>
 
               <div className="space-y-3">
                 {languages.map((item, index) => (
                   <div
-                    key={item.id || index}
-                    className="flex flex-col gap-3 sm:flex-row"
+                    key={item.id || `lang-${index}`}
+                    className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center bg-slate-950/60 border border-slate-800/80 p-3 rounded-2xl"
                   >
                     <input
                       value={item.name}
-                      onChange={(e) =>
-                        updateLanguage(
-                          index,
-                          "name",
-                          e.target.value
-                        )
-                      }
-                      placeholder="Language"
-                      className="flex-1 rounded-lg border border-gray-300 px-4 py-3"
+                      onChange={(e) => updateLanguage(index, "name", e.target.value)}
+                      placeholder="Language (e.g. English, Urdu)"
+                      className="flex-1 rounded-xl bg-slate-950 border border-slate-800 px-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                     />
-
                     <input
                       value={item.proficiency || ""}
-                      onChange={(e) =>
-                        updateLanguage(
-                          index,
-                          "proficiency",
-                          e.target.value
-                        )
-                      }
-                      placeholder="Proficiency"
-                      className="flex-1 rounded-lg border border-gray-300 px-4 py-3"
+                      onChange={(e) => updateLanguage(index, "proficiency", e.target.value)}
+                      placeholder="Proficiency (e.g. Native / Fluent)"
+                      className="sm:w-48 rounded-xl bg-slate-950 border border-slate-800 px-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500"
                     />
-
                     <button
                       type="button"
-                      onClick={() =>
-                        removeLanguage(index)
-                      }
-                      className="rounded-lg border border-red-200 px-4 py-3 text-red-600"
+                      onClick={() => removeLanguage(index)}
+                      className="shrink-0 px-4 py-2.5 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 text-xs font-semibold transition"
                     >
                       Remove
                     </button>
@@ -1451,34 +1232,94 @@ export default function EditCVPage() {
             <button
               type="submit"
               disabled={saving}
-              className="w-full rounded-xl bg-blue-600 px-6 py-4 text-lg font-semibold text-white shadow-lg hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-2xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white py-4 font-bold text-base shadow-xl shadow-indigo-600/30 transition hover:scale-[1.01] disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {saving ? "Saving CV..." : "Save CV"}
+              {saving ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  <span>Saving Changes to Database...</span>
+                </>
+              ) : (
+                <span>💾 Save CV Changes</span>
+              )}
             </button>
           </form>
 
-          <div className="xl:sticky xl:top-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">
-                  CV Preview
-                </h2>
-
-                <p className="text-sm text-gray-500">
-                  Template:{" "}
-                  <span className="font-semibold capitalize">
-                    {template}
-                  </span>
-                </p>
+          {/* Right Column: Sticky Live Preview Pane */}
+          <div className="lg:col-span-6 xl:col-span-6 lg:sticky lg:top-24 space-y-4">
+            <div className="flex items-center justify-between px-2 no-print">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Live Preview ({template})
+                </span>
               </div>
             </div>
 
-            <div className="overflow-auto rounded-2xl bg-gray-300 p-4 shadow-inner">
-              <CVPreview />
+            {/* Preview Box Container */}
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/60 p-4 sm:p-6 backdrop-blur-xl shadow-2xl overflow-auto max-h-[calc(100vh-8rem)]">
+              <CVPreview
+                cv={{
+                  title,
+                  template,
+                  personalInfo,
+                  education,
+                  experiences,
+                  skills,
+                  projects,
+                  certifications,
+                  languages,
+                }}
+              />
             </div>
           </div>
         </div>
-      </div>
+      </main>
+
+      {/* Fullscreen Preview Modal */}
+      {isFullscreenPreview && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/90 backdrop-blur-xl p-4 sm:p-8 overflow-y-auto no-print">
+          <div className="max-w-[900px] w-full mx-auto flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <h3 className="text-lg font-bold text-white">Full A4 Document Preview ({template})</h3>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleDownloadPDF}
+                disabled={downloadingPdf}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition"
+              >
+                {downloadingPdf ? "Generating PDF..." : "📥 Download PDF File"}
+              </button>
+
+              <button
+                onClick={() => setIsFullscreenPreview(false)}
+                className="px-3.5 py-2 rounded-xl border border-slate-800 bg-slate-900 text-slate-300 hover:text-white font-semibold text-xs transition"
+              >
+                Close ✕
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 flex justify-center pb-12">
+            <div className="w-full max-w-[800px] bg-white rounded-md shadow-2xl p-2">
+              <CVPreview
+                cv={{
+                  title,
+                  template,
+                  personalInfo,
+                  education,
+                  experiences,
+                  skills,
+                  projects,
+                  certifications,
+                  languages,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

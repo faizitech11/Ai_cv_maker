@@ -1,10 +1,10 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../app/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -150,7 +150,7 @@ model UploadedCV {
   fileType      String
   fileSize      Int
   filePath      String?
-  extractedText String?  @db.LongText
+  extractedText String?
   parsedData    Json?
   status        String   @default("uploaded")
   createdAt     DateTime @default(now())
@@ -165,8 +165,8 @@ model UploadedCV {
 model AIContent {
   id            String   @id @default(cuid())
   type          String
-  originalText  String?  @db.Text
-  generatedText String?  @db.Text
+  originalText  String?
+  generatedText String?
   model         String?
   status        String   @default("generated")
   createdAt     DateTime @default(now())

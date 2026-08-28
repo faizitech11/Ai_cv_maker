@@ -350,6 +350,36 @@ function normalizeCVData(
   };
 }
 
+function fallbackCVExtraction(cvText: string): StructuredCVData {
+  const emailMatch = cvText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  const phoneMatch = cvText.match(/(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+  const lines = cvText.split("\n").map((l) => l.trim()).filter(Boolean);
+  const fullName = lines.length > 0 ? lines[0].slice(0, 50) : undefined;
+
+  return {
+    personalInfo: {
+      fullName,
+      email: emailMatch ? emailMatch[0] : undefined,
+      phone: phoneMatch ? phoneMatch[0] : undefined,
+      address: undefined,
+      city: undefined,
+      country: undefined,
+      summary: lines.slice(1, 4).join(" ").slice(0, 300) || undefined,
+      jobTitle: lines.length > 1 ? lines[1].slice(0, 50) : undefined,
+      profileImage: undefined,
+      linkedin: undefined,
+      github: undefined,
+      portfolio: undefined,
+    },
+    education: [],
+    experiences: [],
+    skills: [],
+    projects: [],
+    certifications: [],
+    languages: [],
+  };
+}
+
 export async function parseCVToStructuredData(
   cvText: string
 ): Promise<StructureResult> {
@@ -362,7 +392,15 @@ export async function parseCVToStructuredData(
       };
     }
 
-    const token = getToken();
+    const token = process.env.HUGGINGFACE_API_KEY;
+
+    if (!token) {
+      return {
+        success: true,
+        data: fallbackCVExtraction(cvText),
+        message: "Parsed using standard extraction (add HUGGINGFACE_API_KEY for AI enhancement).",
+      };
+    }
 
     const response = await fetch(HUGGING_FACE_API_URL, {
       method: "POST",
@@ -396,9 +434,9 @@ export async function parseCVToStructuredData(
       );
 
       return {
-        success: false,
-        data: null,
-        message: "Unable to parse CV using AI.",
+        success: true,
+        data: fallbackCVExtraction(cvText),
+        message: "Parsed using standard extraction fallback.",
       };
     }
 
@@ -409,9 +447,9 @@ export async function parseCVToStructuredData(
 
     if (!generatedText) {
       return {
-        success: false,
-        data: null,
-        message: "AI returned empty CV data.",
+        success: true,
+        data: fallbackCVExtraction(cvText),
+        message: "AI returned empty content, fallback used.",
       };
     }
 
@@ -426,9 +464,9 @@ export async function parseCVToStructuredData(
       console.error("JSON parsing error:", error);
 
       return {
-        success: false,
-        data: null,
-        message: "AI returned invalid structured CV data.",
+        success: true,
+        data: fallbackCVExtraction(cvText),
+        message: "Parsed using fallback due to AI JSON format.",
       };
     }
 
@@ -442,12 +480,9 @@ export async function parseCVToStructuredData(
     console.error("CV structure parsing error:", error);
 
     return {
-      success: false,
-      data: null,
-      message:
-        error instanceof Error
-          ? error.message
-          : "Unable to structure CV data.",
+      success: true,
+      data: fallbackCVExtraction(cvText),
+      message: "Parsed using basic text extraction.",
     };
   }
-}
+}

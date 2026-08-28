@@ -99,7 +99,7 @@ export default function UploadCVPage() {
         return;
       }
 
-      setMessage("CV uploaded successfully.");
+      setMessage("CV uploaded successfully! Redirecting...");
 
       setTimeout(() => {
         window.location.href = "/dashboard";
@@ -141,26 +141,30 @@ export default function UploadCVPage() {
   const isImage = file?.type.startsWith("image/");
 
   return (
-    <main className="min-h-screen bg-gray-50 px-6 py-10">
-      <div className="mx-auto max-w-3xl">
-        <div className="mb-8">
+    <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center p-6 relative overflow-hidden font-sans">
+      {/* Glow Effects */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 -right-40 w-96 h-96 bg-blue-600/15 rounded-full blur-3xl" />
+      </div>
+
+      <div className="relative z-10 w-full max-w-2xl">
+        <div className="mb-6">
           <Link
             href="/dashboard"
-            className="text-sm font-medium text-blue-600 hover:text-blue-700"
+            className="text-xs font-semibold text-slate-400 hover:text-white transition flex items-center gap-1 mb-4"
           >
             ← Back to Dashboard
           </Link>
-
-          <h1 className="mt-5 text-3xl font-bold text-gray-900">
+          <h1 className="text-3xl font-extrabold text-white">
             Upload Existing CV
           </h1>
-
-          <p className="mt-2 text-gray-600">
-            Upload your existing CV and prepare it for editing.
+          <p className="mt-2 text-sm text-slate-400">
+            Upload a PDF, DOCX, or Image file to parse and extract your details into the editor.
           </p>
         </div>
 
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
+        <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur-xl">
           <div
             onDragOver={(event) => {
               event.preventDefault();
@@ -170,23 +174,22 @@ export default function UploadCVPage() {
             onDrop={handleDrop}
             className={`rounded-2xl border-2 border-dashed p-10 text-center transition ${
               dragging
-                ? "border-blue-500 bg-blue-50"
-                : "border-gray-300 bg-gray-50 hover:border-blue-400"
+                ? "border-indigo-500 bg-indigo-500/10"
+                : "border-slate-800 bg-slate-950/50 hover:border-slate-700"
             }`}
           >
-            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-blue-100 text-4xl">
+            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-4xl mb-4">
               📄
             </div>
 
-            <h2 className="mt-5 text-xl font-bold text-gray-900">
-              Drag & Drop your CV here
+            <h2 className="text-xl font-bold text-white">
+              Drag & Drop your CV file here
             </h2>
 
-            <p className="mt-2 text-gray-500">or</p>
+            <p className="mt-2 text-xs text-slate-400">or</p>
 
-            <label className="mt-4 inline-flex cursor-pointer rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700">
-              Browse Files
-
+            <label className="mt-4 inline-flex cursor-pointer rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold text-sm px-6 py-3 shadow-lg shadow-indigo-600/30 transition">
+              Browse Computer
               <input
                 type="file"
                 accept=".pdf,.docx,.jpg,.jpeg,.png,.webp"
@@ -195,37 +198,32 @@ export default function UploadCVPage() {
               />
             </label>
 
-            <p className="mt-4 text-sm text-gray-500">
-              Supported formats: PDF, DOCX, JPG, JPEG, PNG, WEBP
-            </p>
-
-            <p className="mt-1 text-sm text-gray-500">
-              Maximum file size: 10 MB
+            <p className="mt-4 text-xs text-slate-500">
+              Supported formats: PDF, DOCX, JPG, JPEG, PNG, WEBP (Max 10 MB)
             </p>
           </div>
 
           {file && (
-            <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950 p-4">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-4">
                   {isImage && previewUrl ? (
                     <img
                       src={previewUrl}
                       alt="CV preview"
-                      className="h-14 w-14 shrink-0 rounded-lg border border-gray-200 object-cover"
+                      className="h-14 w-14 shrink-0 rounded-xl border border-slate-800 object-cover"
                     />
                   ) : (
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-xl">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-2xl text-indigo-400">
                       📄
                     </div>
                   )}
 
                   <div className="min-w-0">
-                    <p className="truncate font-semibold text-gray-900">
+                    <p className="truncate font-semibold text-white text-sm">
                       {file.name}
                     </p>
-
-                    <p className="text-sm text-gray-500">
+                    <p className="text-xs text-slate-400">
                       {formatFileSize(file.size)}
                     </p>
                   </div>
@@ -235,7 +233,7 @@ export default function UploadCVPage() {
                   type="button"
                   onClick={removeFile}
                   disabled={uploading}
-                  className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500/10 transition"
                 >
                   Remove
                 </button>
@@ -244,21 +242,21 @@ export default function UploadCVPage() {
           )}
 
           {error && (
-            <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <div className="mt-6 rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
               {error}
             </div>
           )}
 
           {message && (
-            <div className="mt-5 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700">
+            <div className="mt-6 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-3 text-sm text-emerald-400">
               {message}
             </div>
           )}
 
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <div className="mt-8 flex gap-4 justify-end">
             <Link
               href="/dashboard"
-              className="rounded-lg border border-gray-300 px-6 py-3 text-center font-semibold text-gray-700 transition hover:bg-gray-50"
+              className="px-6 py-3 rounded-xl border border-slate-800 text-slate-300 hover:text-white font-semibold text-sm transition"
             >
               Cancel
             </Link>
@@ -267,9 +265,9 @@ export default function UploadCVPage() {
               type="button"
               onClick={uploadFile}
               disabled={!file || uploading}
-              className="rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold text-sm shadow-lg shadow-indigo-600/30 transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {uploading ? "Uploading..." : "Upload CV"}
+              {uploading ? "Uploading & Extracting..." : "Upload & Parse CV"}
             </button>
           </div>
         </div>
@@ -277,4 +275,3 @@ export default function UploadCVPage() {
     </main>
   );
 }
-
