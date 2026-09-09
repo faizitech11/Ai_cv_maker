@@ -475,7 +475,7 @@ export default function CVPreview({ cv }: CVPreviewProps) {
                       }`}
                     >
                       {value(s.name)}
-                      {s.level ? ` (${s.level})` : ""}
+                      {s.level && s.level.toLowerCase() !== "proficient" ? ` (${s.level})` : ""}
                     </span>
                   ))}
                 </div>

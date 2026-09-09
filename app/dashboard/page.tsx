@@ -23,21 +23,22 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.replace("/login");
-    } else if (status === "authenticated") {
+    if (status === "authenticated") {
       fetchCVs();
+    } else if (status === "unauthenticated") {
+      setLoading(false);
     }
-  }, [status, router]);
+  }, [status]);
 
   const fetchCVs = async () => {
     try {
       setLoading(true);
+      setError("");
 
       const response = await fetch("/api/cv");
 
       if (response.status === 401) {
-        router.replace("/login");
+        setError("Your session has expired. Please sign in again.");
         return;
       }
 
@@ -53,7 +54,7 @@ export default function DashboardPage() {
         setError(data.message || "Failed to load CVs");
       }
     } catch {
-      setError("Unable to load your CVs");
+      setError("Unable to load your CVs. Please check your connection.");
     } finally {
       setLoading(false);
     }
@@ -114,7 +115,38 @@ export default function DashboardPage() {
   }
 
   if (status === "unauthenticated") {
-    return null;
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6 font-sans relative overflow-hidden">
+        <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+          <div className="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl" />
+          <div className="absolute top-1/3 -right-40 w-96 h-96 bg-blue-600/15 rounded-full blur-3xl" />
+        </div>
+
+        <div className="relative z-10 max-w-md w-full rounded-3xl bg-slate-900/90 border border-slate-800 p-8 text-center shadow-2xl backdrop-blur-xl">
+          <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-3xl flex items-center justify-center mx-auto mb-4 text-indigo-400">
+            🔒
+          </div>
+          <h2 className="text-2xl font-bold text-white mb-2">Login Required</h2>
+          <p className="text-sm text-slate-400 mb-6">
+            Please log in to your account to view your saved CVs and create new ones.
+          </p>
+          <div className="space-y-3">
+            <Link
+              href="/login"
+              className="inline-block w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold text-sm transition shadow-lg shadow-indigo-600/30"
+            >
+              Sign In to Your Account
+            </Link>
+            <Link
+              href="/register"
+              className="inline-block w-full py-3 rounded-xl border border-slate-800 hover:bg-slate-800/60 text-slate-300 text-sm font-medium transition"
+            >
+              Create New Account
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -157,11 +189,14 @@ export default function DashboardPage() {
       <main className="relative z-10 max-w-7xl mx-auto px-6 py-12">
         <div className="mb-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6 pb-8 border-b border-slate-900">
           <div>
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold mb-2">
+              👋 Welcome back, {session?.user?.name || session?.user?.email || "User"}
+            </div>
             <h1 className="text-3xl font-extrabold text-white">
               My Dashboard
             </h1>
-            <p className="mt-2 text-slate-400 text-sm sm:text-base">
-              Create, edit, and export your professional AI-powered resumes.
+            <p className="mt-1 text-slate-400 text-sm sm:text-base">
+              Create, edit, optimize, and export your professional AI-powered resumes.
             </p>
           </div>
 
@@ -183,8 +218,14 @@ export default function DashboardPage() {
         </div>
 
         {error && (
-          <div className="mb-8 rounded-xl bg-red-500/10 border border-red-500/20 px-5 py-4 text-sm text-red-400">
-            {error}
+          <div className="mb-8 rounded-xl bg-red-500/10 border border-red-500/20 px-5 py-4 text-sm text-red-400 flex items-center justify-between">
+            <span>{error}</span>
+            <button
+              onClick={() => fetchCVs()}
+              className="ml-4 px-3 py-1 rounded-lg bg-red-500/20 text-xs font-semibold text-red-300 hover:bg-red-500/30"
+            >
+              Retry
+            </button>
           </div>
         )}
 
@@ -202,11 +243,11 @@ export default function DashboardPage() {
             </div>
 
             <h2 className="text-2xl font-bold text-white">
-              No CVs Found
+              No CVs Found Yet
             </h2>
 
             <p className="mt-3 text-slate-400 text-sm leading-relaxed max-w-md mx-auto">
-              You haven't created any CV documents yet. Build your first CV from scratch or upload an existing resume to start optimizing!
+              You haven't created any CV documents under this account yet. Build your first CV from scratch or upload an existing resume to start optimizing!
             </p>
 
             <div className="mt-8 flex flex-col sm:flex-row justify-center gap-4">

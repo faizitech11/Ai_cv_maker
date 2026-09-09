@@ -99,11 +99,25 @@ export default function UploadCVPage() {
         return;
       }
 
-      setMessage("CV uploaded successfully! Redirecting...");
+      const cvId = data.cv?.id;
+      const parsed = data.parsedData;
+      const expCount = parsed?.experiences?.length || 0;
+      const eduCount = parsed?.education?.length || 0;
+      const skillsCount = parsed?.skills?.length || 0;
+
+      const statsMsg = expCount || eduCount || skillsCount
+        ? ` (${expCount} experiences, ${eduCount} educations, ${skillsCount} skills extracted)`
+        : "";
+
+      setMessage(`CV uploaded & parsed successfully!${statsMsg} Opening editor...`);
 
       setTimeout(() => {
-        window.location.href = "/dashboard";
-      }, 1000);
+        if (cvId) {
+          window.location.href = `/cv/edit/${cvId}`;
+        } else {
+          window.location.href = "/dashboard";
+        }
+      }, 1200);
     } catch {
       setError("Something went wrong while uploading the CV.");
     } finally {

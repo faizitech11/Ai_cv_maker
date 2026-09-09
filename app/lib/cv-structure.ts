@@ -7,11 +7,7 @@ import type {
   Certification,
   Language,
 } from "@/app/types/cv";
-
-const HUGGING_FACE_API_URL =
-  "https://router.huggingface.co/v1/chat/completions";
-
-const MODEL = "meta-llama/Llama-3.1-8B-Instruct";
+import { callLLM } from "@/app/lib/ai";
 
 export interface StructuredCVData {
   personalInfo: PersonalInfo | null;
@@ -23,125 +19,91 @@ export interface StructuredCVData {
   languages: Language[];
 }
 
-type StructureResult = {
+export type StructureResult = {
   success: boolean;
   data: StructuredCVData | null;
+  provider?: string;
   message?: string;
 };
 
-function getToken(): string {
-  const token = process.env.HUGGINGFACE_API_KEY;
-
-  if (!token) {
-    throw new Error("HUGGINGFACE_API_KEY is not configured.");
-  }
-
-  return token;
-}
-
 function getSystemPrompt(): string {
-  return `
-You are a CV information extraction system.
+  return `You are an expert CV and resume parsing system.
+Extract structured information ONLY from the user's CV text.
 
-Your task is to extract structured information ONLY from the CV text provided by the user.
+CRITICAL RULES:
+1. Never invent fake information, companies, dates, or degrees.
+2. If any field is not found in the text, use null, empty string, or empty array.
+3. Return strictly valid JSON with no markdown wrapping and no conversational text.
 
-STRICT RULES:
-
-1. Never invent information.
-2. Never create fake education.
-3. Never create fake companies.
-4. Never create fake job positions.
-5. Never create fake skills.
-6. Never create fake projects.
-7. Never create fake certifications.
-8. Never create fake languages.
-9. Never create fake dates.
-10. Never create fake achievements.
-11. If information is missing, use null, an empty string, or an empty array.
-12. Keep the original meaning of the CV.
-13. Do not improve or rewrite the content.
-14. This step is ONLY extraction and organization.
-15. Return ONLY valid JSON.
-16. Do not use markdown.
-17. Do not put the JSON inside a code block.
-
-Return exactly this JSON structure:
-
+Required JSON Structure:
 {
   "personalInfo": {
-    "fullName": null,
-    "email": null,
-    "phone": null,
-    "address": null,
-    "city": null,
-    "country": null,
-    "summary": null,
-    "jobTitle": null,
+    "fullName": string | null,
+    "email": string | null,
+    "phone": string | null,
+    "address": string | null,
+    "city": string | null,
+    "country": string | null,
+    "summary": string | null,
+    "jobTitle": string | null,
     "profileImage": null,
-    "linkedin": null,
-    "github": null,
-    "portfolio": null
+    "linkedin": string | null,
+    "github": string | null,
+    "portfolio": string | null
   },
-  "education": [],
-  "experiences": [],
-  "skills": [],
-  "projects": [],
-  "certifications": [],
-  "languages": []
-}
-
-Education objects must use:
-{
-  "degree": "",
-  "institution": "",
-  "location": null,
-  "startDate": null,
-  "endDate": null,
-  "description": null
-}
-
-Experience objects must use:
-{
-  "position": "",
-  "company": "",
-  "location": null,
-  "startDate": null,
-  "endDate": null,
-  "description": null
-}
-
-Skill objects must use:
-{
-  "name": "",
-  "level": null
-}
-
-Project objects must use:
-{
-  "name": "",
-  "description": null,
-  "technologies": null,
-  "projectUrl": null,
-  "startDate": null,
-  "endDate": null
-}
-
-Certification objects must use:
-{
-  "name": "",
-  "organization": null,
-  "issueDate": null,
-  "expiryDate": null,
-  "credentialId": null,
-  "credentialUrl": null
-}
-
-Language objects must use:
-{
-  "name": "",
-  "proficiency": null
-}
-`;
+  "education": [
+    {
+      "degree": string,
+      "institution": string,
+      "location": string | null,
+      "startDate": string | null,
+      "endDate": string | null,
+      "description": string | null
+    }
+  ],
+  "experiences": [
+    {
+      "position": string,
+      "company": string,
+      "location": string | null,
+      "startDate": string | null,
+      "endDate": string | null,
+      "description": string | null
+    }
+  ],
+  "skills": [
+    {
+      "name": string,
+      "level": string | null
+    }
+  ],
+  "projects": [
+    {
+      "name": string,
+      "description": string | null,
+      "technologies": string | null,
+      "projectUrl": string | null,
+      "startDate": string | null,
+      "endDate": string | null
+    }
+  ],
+  "certifications": [
+    {
+      "name": string,
+      "organization": string | null,
+      "issueDate": string | null,
+      "expiryDate": string | null,
+      "credentialId": string | null,
+      "credentialUrl": string | null
+    }
+  ],
+  "languages": [
+    {
+      "name": string,
+      "proficiency": string | null
+    }
+  ]
+}`;
 }
 
 function cleanJsonText(text: string): string {
@@ -166,15 +128,11 @@ function nullableString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
-
   const trimmed = value.trim();
-
   return trimmed || undefined;
 }
 
-function normalizePersonalInfo(
-  value: unknown
-): PersonalInfo | null {
+function normalizePersonalInfo(value: unknown): PersonalInfo | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -196,135 +154,99 @@ function normalizePersonalInfo(
     portfolio: nullableString(item.portfolio),
   };
 
-  const hasData = Object.values(personalInfo).some(
-    (value) => value !== undefined
-  );
-
+  const hasData = Object.values(personalInfo).some((val) => val !== undefined);
   return hasData ? personalInfo : null;
 }
 
 function normalizeEducation(value: unknown): Education[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+  if (!Array.isArray(value)) return [];
 
   return value
-    .filter(
-      (item): item is Record<string, unknown> =>
-        Boolean(item) && typeof item === "object"
-    )
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
     .map((item) => ({
-      degree: nullableString(item.degree) || "Not specified",
-      institution:
-        nullableString(item.institution) || "Not specified",
+      degree: nullableString(item.degree) || "Degree",
+      institution: nullableString(item.institution) || "Institution",
       location: nullableString(item.location),
       startDate: nullableString(item.startDate),
       endDate: nullableString(item.endDate),
       description: nullableString(item.description),
-    }));
+    }))
+    .filter((e) => e.degree !== "Degree" || e.institution !== "Institution");
 }
 
 function normalizeExperiences(value: unknown): Experience[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+  if (!Array.isArray(value)) return [];
 
   return value
-    .filter(
-      (item): item is Record<string, unknown> =>
-        Boolean(item) && typeof item === "object"
-    )
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
     .map((item) => ({
-      position:
-        nullableString(item.position) || "Not specified",
-      company:
-        nullableString(item.company) || "Not specified",
+      position: nullableString(item.position) || "Position",
+      company: nullableString(item.company) || "Company",
       location: nullableString(item.location),
       startDate: nullableString(item.startDate),
       endDate: nullableString(item.endDate),
       description: nullableString(item.description),
-    }));
+    }))
+    .filter((e) => e.position !== "Position" || e.company !== "Company");
 }
 
 function normalizeSkills(value: unknown): Skill[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+  if (!Array.isArray(value)) return [];
 
   return value
-    .filter(
-      (item): item is Record<string, unknown> =>
-        Boolean(item) && typeof item === "object"
-    )
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
     .map((item) => ({
-      name: nullableString(item.name) || "Not specified",
+      name: nullableString(item.name) || "",
       level: nullableString(item.level),
     }))
-    .filter((skill) => skill.name !== "Not specified");
+    .filter((skill) => Boolean(skill.name && skill.name !== "Not specified"));
 }
 
 function normalizeProjects(value: unknown): Project[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+  if (!Array.isArray(value)) return [];
 
   return value
-    .filter(
-      (item): item is Record<string, unknown> =>
-        Boolean(item) && typeof item === "object"
-    )
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
     .map((item) => ({
-      name: nullableString(item.name) || "Not specified",
+      name: nullableString(item.name) || "",
       description: nullableString(item.description),
       technologies: nullableString(item.technologies),
       projectUrl: nullableString(item.projectUrl),
       startDate: nullableString(item.startDate),
       endDate: nullableString(item.endDate),
-    }));
+    }))
+    .filter((p) => Boolean(p.name));
 }
 
-function normalizeCertifications(
-  value: unknown
-): Certification[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+function normalizeCertifications(value: unknown): Certification[] {
+  if (!Array.isArray(value)) return [];
 
   return value
-    .filter(
-      (item): item is Record<string, unknown> =>
-        Boolean(item) && typeof item === "object"
-    )
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
     .map((item) => ({
-      name: nullableString(item.name) || "Not specified",
+      name: nullableString(item.name) || "",
       organization: nullableString(item.organization),
       issueDate: nullableString(item.issueDate),
       expiryDate: nullableString(item.expiryDate),
       credentialId: nullableString(item.credentialId),
       credentialUrl: nullableString(item.credentialUrl),
-    }));
+    }))
+    .filter((c) => Boolean(c.name));
 }
 
 function normalizeLanguages(value: unknown): Language[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+  if (!Array.isArray(value)) return [];
 
   return value
-    .filter(
-      (item): item is Record<string, unknown> =>
-        Boolean(item) && typeof item === "object"
-    )
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
     .map((item) => ({
-      name: nullableString(item.name) || "Not specified",
+      name: nullableString(item.name) || "",
       proficiency: nullableString(item.proficiency),
     }))
-    .filter((language) => language.name !== "Not specified");
+    .filter((l) => Boolean(l.name));
 }
 
-function normalizeCVData(
-  value: unknown
-): StructuredCVData {
+function normalizeCVData(value: unknown): StructuredCVData {
   if (!value || typeof value !== "object") {
     return {
       personalInfo: null,
@@ -350,11 +272,294 @@ function normalizeCVData(
   };
 }
 
-function fallbackCVExtraction(cvText: string): StructuredCVData {
+/**
+ * Robust Heuristic ATS Resume Extractor.
+ * Parses sections, dates, contact details, experiences, educations, and skills
+ * with zero external dependencies when no LLM API key is configured.
+ */
+export function heuristicATSExtraction(cvText: string): StructuredCVData {
+  const lines = cvText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  // 1. Contact Information Regexes
   const emailMatch = cvText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  const phoneMatch = cvText.match(/(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
-  const lines = cvText.split("\n").map((l) => l.trim()).filter(Boolean);
-  const fullName = lines.length > 0 ? lines[0].slice(0, 50) : undefined;
+  const phoneMatch = cvText.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\+?\d{10,14}/);
+  const linkedinMatch = cvText.match(/(?:linkedin\.com\/in\/[a-zA-Z0-9_-]+)/i);
+  const githubMatch = cvText.match(/(?:github\.com\/[a-zA-Z0-9_-]+)/i);
+  const portfolioMatch = cvText.match(/(?:https?:\/\/)?([a-zA-Z0-9-]+\.(?:dev|me|io|site|org))/i);
+
+  // Identify Full Name: first line that doesn't contain email, phone, or symbols
+  let fullName: string | undefined;
+  for (const line of lines.slice(0, 5)) {
+    if (
+      !line.includes("@") &&
+      !line.match(/\d{5,}/) &&
+      !line.match(/curriculum|resume|cv|page|email|phone/i) &&
+      line.length >= 3 &&
+      line.length <= 40
+    ) {
+      fullName = line;
+      break;
+    }
+  }
+
+  // Identify Job Title
+  let jobTitle: string | undefined;
+  for (const line of lines.slice(0, 8)) {
+    if (
+      line !== fullName &&
+      line.match(/developer|engineer|manager|designer|specialist|lead|consultant|architect|analyst|executive|officer|intern|associate/i) &&
+      line.length <= 60
+    ) {
+      jobTitle = line.replace(/^[|•-]\s*/, "");
+      break;
+    }
+  }
+
+  // 2. Section Segmentation
+  const sectionHeaders: { section: string; regex: RegExp }[] = [
+    { section: "summary", regex: /^(?:professional\s+summary|executive\s+summary|summary|profile|about\s+me|career\s+objective|objective)\b/i },
+    { section: "experience", regex: /^(?:work\s+experience|professional\s+experience|employment\s+history|experience|work\s+history)\b/i },
+    { section: "education", regex: /^(?:education|academic\s+background|academic\s+qualifications|qualifications|academic\s+history)\b/i },
+    { section: "skills", regex: /^(?:technical\s+skills|core\s+competencies|key\s+skills|skills\s*(?:&|and)\s*expertise|skills)\b/i },
+    { section: "projects", regex: /^(?:projects|key\s+projects|academic\s+projects|personal\s+projects)\b/i },
+    { section: "certifications", regex: /^(?:certifications|certificates|licenses|courses|accreditations)\b/i },
+    { section: "languages", regex: /^(?:languages|language\s+proficiency)\b/i },
+  ];
+
+  const sectionLines: Record<string, string[]> = {
+    summary: [],
+    experience: [],
+    education: [],
+    skills: [],
+    projects: [],
+    certifications: [],
+    languages: [],
+  };
+
+  let currentSection: string | null = null;
+
+  for (const line of lines) {
+    let matchedHeader = false;
+    for (const header of sectionHeaders) {
+      if (header.regex.test(line)) {
+        currentSection = header.section;
+        matchedHeader = true;
+        break;
+      }
+    }
+
+    if (matchedHeader) continue;
+
+    if (currentSection && sectionLines[currentSection]) {
+      sectionLines[currentSection].push(line);
+    }
+  }
+
+  // Summary Parsing
+  let summaryText = sectionLines.summary.join(" ").slice(0, 600);
+  if (!summaryText && lines.length > 2) {
+    // If no explicit summary header, check lines 2 to 5
+    const candidateLines = lines.slice(1, 6).filter((l) => l !== jobTitle && !l.includes("@") && !l.match(/\d{5,}/) && l.length > 25);
+    if (candidateLines.length > 0) {
+      summaryText = candidateLines.join(" ").slice(0, 500);
+    }
+  }
+
+  // Date Range Regex for Experience / Education
+  const dateRangeRegex = /(?:(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?|\d{1,2}\/\d{2,4})\s+)?(\d{4})\s*[-–—to]+\s*(?:(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?|\d{1,2}\/\d{2,4})\s+)?(\d{4}|Present|Current|Now)/i;
+
+  // 3. Experience Parser
+  const experiences: Experience[] = [];
+  const expLines = sectionLines.experience;
+  let currentExp: Experience | null = null;
+
+  for (const line of expLines) {
+    const dateMatch = line.match(dateRangeRegex);
+
+    if (dateMatch) {
+      if (currentExp) {
+        experiences.push(currentExp);
+      }
+
+      const datePart = dateMatch[0];
+      const restOfLine = line.replace(datePart, "").replace(/^[|•,-\s]+|[|•,-\s]+$/g, "");
+      const dateParts = datePart.split(/[-–—to]+/i);
+
+      let position = restOfLine || jobTitle || "Position";
+      let company = "Company";
+
+      if (restOfLine.includes(" at ")) {
+        const parts = restOfLine.split(" at ");
+        position = parts[0].trim();
+        company = parts[1].trim();
+      } else if (restOfLine.includes(" - ")) {
+        const parts = restOfLine.split(" - ");
+        position = parts[0].trim();
+        company = parts[1].trim();
+      } else if (restOfLine.includes("|")) {
+        const parts = restOfLine.split("|");
+        position = parts[0].trim();
+        company = parts[1].trim();
+      }
+
+      currentExp = {
+        position,
+        company,
+        startDate: dateParts[0]?.trim() || "",
+        endDate: dateParts[1]?.trim() || "Present",
+        description: "",
+      };
+    } else if (currentExp) {
+      if (currentExp.description) {
+        currentExp.description += `\n${line}`;
+      } else {
+        currentExp.description = line;
+      }
+    } else if (line.match(/developer|engineer|manager|specialist|lead|designer|analyst|executive|officer/i)) {
+      currentExp = {
+        position: line,
+        company: "Company",
+        startDate: "",
+        endDate: "Present",
+        description: "",
+      };
+    }
+  }
+
+  if (currentExp) {
+    experiences.push(currentExp);
+  }
+
+  // 4. Education Parser
+  const education: Education[] = [];
+  const eduLines = sectionLines.education;
+  let currentEdu: Education | null = null;
+  const degreeRegex = /(?:bachelor|master|ph\.?d|doctorate|b\.?s\.?|m\.?s\.?|b\.?a\.?|m\.?a\.?|b\.?sc|m\.?sc|b\.?tech|associate|diploma|matric|intermediate|high\s+school)/i;
+
+  for (const line of eduLines) {
+    const hasDegree = degreeRegex.test(line);
+    const dateMatch = line.match(dateRangeRegex);
+
+    if (hasDegree || (dateMatch && !currentEdu)) {
+      if (currentEdu) education.push(currentEdu);
+
+      const datePart = dateMatch ? dateMatch[0] : "";
+      const cleanLine = datePart ? line.replace(datePart, "").replace(/^[|•,-\s]+|[|•,-\s]+$/g, "") : line;
+      const dateParts = datePart ? datePart.split(/[-–—to]+/i) : [];
+
+      let degree = cleanLine;
+      let institution = "University / College";
+
+      if (cleanLine.includes(" at ")) {
+        const parts = cleanLine.split(" at ");
+        degree = parts[0].trim();
+        institution = parts[1].trim();
+      } else if (cleanLine.includes(",")) {
+        const parts = cleanLine.split(",");
+        degree = parts[0].trim();
+        institution = parts.slice(1).join(",").trim();
+      } else if (cleanLine.includes("-")) {
+        const parts = cleanLine.split("-");
+        degree = parts[0].trim();
+        institution = parts[1].trim();
+      }
+
+      currentEdu = {
+        degree: degree || "Degree",
+        institution: institution || "Institution",
+        startDate: dateParts[0]?.trim() || "",
+        endDate: dateParts[1]?.trim() || "",
+        description: "",
+      };
+    } else if (currentEdu) {
+      if (!currentEdu.institution || currentEdu.institution === "University / College") {
+        currentEdu.institution = line;
+      } else {
+        currentEdu.description = currentEdu.description ? `${currentEdu.description}\n${line}` : line;
+      }
+    }
+  }
+
+  if (currentEdu) education.push(currentEdu);
+
+  // 5. Skills Parser
+  const skills: Skill[] = [];
+  const skillLines = sectionLines.skills;
+  const rawSkillTokens: string[] = [];
+
+  for (const line of skillLines) {
+    // Split by commas, bullets, slashes, or pipes
+    const tokens = line.split(/[,•|/;\t\n]+/).map((t) => t.trim()).filter(Boolean);
+    for (const token of tokens) {
+      const cleanToken = token.replace(/^[-*•]\s*/, "").trim();
+      if (cleanToken.length >= 2 && cleanToken.length <= 40 && !cleanToken.match(/^http/i)) {
+        rawSkillTokens.push(cleanToken);
+      }
+    }
+  }
+
+  // Remove duplicates
+  const seenSkills = new Set<string>();
+  for (const s of rawSkillTokens) {
+    const lower = s.toLowerCase();
+    if (!seenSkills.has(lower)) {
+      seenSkills.add(lower);
+      skills.push({ name: s, level: "Proficient" });
+    }
+  }
+
+  // 6. Projects Parser
+  const projects: Project[] = [];
+  for (const line of sectionLines.projects) {
+    if (line.length > 3 && !line.startsWith("•") && !line.startsWith("-")) {
+      projects.push({
+        name: line,
+        description: "",
+        technologies: "",
+        projectUrl: undefined,
+      });
+    } else if (projects.length > 0) {
+      const lastProject = projects[projects.length - 1];
+      if (line.match(/^tech(?:nologies)?[:\s]/i)) {
+        lastProject.technologies = line.replace(/^tech(?:nologies)?[:\s]/i, "").trim();
+      } else {
+        lastProject.description = lastProject.description ? `${lastProject.description} ${line}` : line;
+      }
+    }
+  }
+
+  // 7. Languages Parser
+  const languages: Language[] = [];
+  const commonLanguages = [
+    "English", "Urdu", "Spanish", "French", "German", "Arabic", "Hindi", "Chinese", "Mandarin",
+    "Russian", "Japanese", "Portuguese", "Italian", "Turkish", "Punjabi", "Pashto", "Sindhi"
+  ];
+
+  for (const line of sectionLines.languages) {
+    for (const lang of commonLanguages) {
+      if (new RegExp(`\\b${lang}\\b`, "i").test(line)) {
+        const profMatch = line.match(/\b(Native|Fluent|Proficient|Intermediate|Basic|Professional|Bilingual)\b/i);
+        languages.push({
+          name: lang,
+          proficiency: profMatch ? profMatch[0] : "Fluent",
+        });
+      }
+    }
+  }
+
+  // 8. Certifications Parser
+  const certifications: Certification[] = [];
+  for (const line of sectionLines.certifications) {
+    if (line.length >= 3 && line.length <= 80) {
+      certifications.push({
+        name: line.replace(/^[-•*]\s*/, ""),
+        organization: undefined,
+      });
+    }
+  }
 
   return {
     personalInfo: {
@@ -364,27 +569,31 @@ function fallbackCVExtraction(cvText: string): StructuredCVData {
       address: undefined,
       city: undefined,
       country: undefined,
-      summary: lines.slice(1, 4).join(" ").slice(0, 300) || undefined,
-      jobTitle: lines.length > 1 ? lines[1].slice(0, 50) : undefined,
+      summary: summaryText || undefined,
+      jobTitle: jobTitle || undefined,
       profileImage: undefined,
-      linkedin: undefined,
-      github: undefined,
-      portfolio: undefined,
+      linkedin: linkedinMatch ? `https://${linkedinMatch[0]}` : undefined,
+      github: githubMatch ? `https://${githubMatch[0]}` : undefined,
+      portfolio: portfolioMatch ? portfolioMatch[0] : undefined,
     },
-    education: [],
-    experiences: [],
-    skills: [],
-    projects: [],
-    certifications: [],
-    languages: [],
+    education,
+    experiences,
+    skills,
+    projects,
+    certifications,
+    languages,
   };
 }
 
+/**
+ * Main CV Parsing entry point.
+ * Uses available LLM provider if key configured, otherwise seamlessly uses the intelligent ATS parser.
+ */
 export async function parseCVToStructuredData(
   cvText: string
 ): Promise<StructureResult> {
   try {
-    if (!cvText.trim()) {
+    if (!cvText || !cvText.trim()) {
       return {
         success: false,
         data: null,
@@ -392,97 +601,66 @@ export async function parseCVToStructuredData(
       };
     }
 
-    const token = process.env.HUGGINGFACE_API_KEY;
+    // Step 1: Check if any external LLM provider is available
+    const hasAnyKey = Boolean(
+      process.env.GEMINI_API_KEY?.trim() ||
+      process.env.GROQ_API_KEY?.trim() ||
+      process.env.OPENAI_API_KEY?.trim() ||
+      process.env.OPENROUTER_API_KEY?.trim() ||
+      process.env.HUGGINGFACE_API_KEY?.trim()
+    );
 
-    if (!token) {
-      return {
-        success: true,
-        data: fallbackCVExtraction(cvText),
-        message: "Parsed using standard extraction (add HUGGINGFACE_API_KEY for AI enhancement).",
-      };
+    if (hasAnyKey) {
+      try {
+        const prompt = `Extract all details from this CV text into the exact JSON format:\n\n${cvText}`;
+        const llmResult = await callLLM(prompt, getSystemPrompt(), {
+          jsonMode: true,
+          maxTokens: 3500,
+          temperature: 0.1,
+        });
+
+        if (llmResult.success && llmResult.text) {
+          const jsonText = cleanJsonText(llmResult.text);
+          const parsed = JSON.parse(jsonText);
+          const structured = normalizeCVData(parsed);
+
+          // Verify that structured result has meaningful data
+          if (
+            structured.personalInfo ||
+            structured.experiences.length > 0 ||
+            structured.education.length > 0 ||
+            structured.skills.length > 0
+          ) {
+            return {
+              success: true,
+              data: structured,
+              provider: llmResult.provider,
+              message: `Parsed successfully using ${llmResult.provider}`,
+            };
+          }
+        }
+      } catch (aiParseErr) {
+        console.warn("LLM parsing encountered format error, falling back to ATS Heuristic Engine...", aiParseErr);
+      }
     }
 
-    const response = await fetch(HUGGING_FACE_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [
-          {
-            role: "system",
-            content: getSystemPrompt(),
-          },
-          {
-            role: "user",
-            content: `Extract information from this CV:\n\n${cvText}`,
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 3000,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-
-      console.error(
-        "Hugging Face structured CV error:",
-        errorText
-      );
-
-      return {
-        success: true,
-        data: fallbackCVExtraction(cvText),
-        message: "Parsed using standard extraction fallback.",
-      };
-    }
-
-    const result = await response.json();
-
-    const generatedText =
-      result?.choices?.[0]?.message?.content?.trim();
-
-    if (!generatedText) {
-      return {
-        success: true,
-        data: fallbackCVExtraction(cvText),
-        message: "AI returned empty content, fallback used.",
-      };
-    }
-
-    const jsonText = cleanJsonText(generatedText);
-
-    let parsedData: unknown;
-
-    try {
-      parsedData = JSON.parse(jsonText);
-    } catch (error) {
-      console.error("Invalid AI JSON:", generatedText);
-      console.error("JSON parsing error:", error);
-
-      return {
-        success: true,
-        data: fallbackCVExtraction(cvText),
-        message: "Parsed using fallback due to AI JSON format.",
-      };
-    }
-
-    const structuredData = normalizeCVData(parsedData);
+    // Step 2: Intelligent Heuristic ATS Fallback Engine (Guaranteed extraction)
+    const heuristicData = heuristicATSExtraction(cvText);
 
     return {
       success: true,
-      data: structuredData,
+      data: heuristicData,
+      provider: "Smart Local ATS Parser",
+      message: "Parsed successfully using Built-in ATS Extraction Engine",
     };
   } catch (error) {
     console.error("CV structure parsing error:", error);
 
     return {
       success: true,
-      data: fallbackCVExtraction(cvText),
-      message: "Parsed using basic text extraction.",
+      data: heuristicATSExtraction(cvText),
+      provider: "Smart Local ATS Parser",
+      message: "Parsed using standard extraction fallback.",
     };
   }
-}
+}

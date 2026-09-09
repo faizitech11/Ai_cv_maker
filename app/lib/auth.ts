@@ -70,13 +70,17 @@ export const authOptions: NextAuthOptions = {
     },
 
     async session({ session, token }) {
-      if (session.user && token.id) {
-        session.user.id = token.id as string;
+      if (session.user) {
+        session.user.id = (token.id as string) || (token.sub as string);
       }
 
       return session;
     },
   },
+
+  useSecureCookies:
+    process.env.NODE_ENV === "production" &&
+    Boolean(process.env.NEXTAUTH_URL?.startsWith("https")),
 
   secret: process.env.NEXTAUTH_SECRET,
 };

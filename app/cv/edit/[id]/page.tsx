@@ -308,13 +308,14 @@ export default function EditCVPage() {
     content: string,
     type: "summary" | "experience" | "project" | "skills" | "general",
     onSuccess: (enhancedText: string) => void,
-    loadingKey: string
-  ) {
-    if (!content.trim()) {
-      setError("Please write some text first before clicking AI Enhance.");
-      return;
+    loadingKey: string,
+    extraContext?: {
+      position?: string;
+      company?: string;
+      projectName?: string;
+      technologies?: string;
     }
-
+  ) {
     try {
       setAiLoading(loadingKey);
       setError("");
@@ -324,7 +325,23 @@ export default function EditCVPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ content, type }),
+        body: JSON.stringify({
+          content,
+          type,
+          cvId: id,
+          jobTitle: personalInfo.jobTitle,
+          position: extraContext?.position,
+          company: extraContext?.company,
+          projectName: extraContext?.projectName,
+          technologies: extraContext?.technologies,
+          context: {
+            jobTitle: personalInfo.jobTitle,
+            fullName: personalInfo.fullName,
+            experiences,
+            education,
+            skills,
+          },
+        }),
       });
 
       const data = await response.json();
@@ -335,10 +352,94 @@ export default function EditCVPage() {
       }
 
       onSuccess(data.text);
-      setSuccess("Content successfully enhanced with AI!");
+      const providerInfo = data.provider ? ` using ${data.provider}` : "";
+      setSuccess(`Content successfully enhanced${providerInfo}!`);
       setTimeout(() => setSuccess(""), 4000);
     } catch {
       setError("Error connecting to AI service.");
+    } finally {
+      setAiLoading(null);
+    }
+  }
+
+  async function handleAIGenerateSummary() {
+    try {
+      setAiLoading("summary-generate");
+      setError("");
+
+      const response = await fetch("/api/ai/enhance", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "summary_from_profile",
+          cvId: id,
+          jobTitle: personalInfo.jobTitle,
+          context: {
+            fullName: personalInfo.fullName,
+            jobTitle: personalInfo.jobTitle,
+            experiences,
+            education,
+            skills,
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        setError(data.message || "Failed to auto-generate summary.");
+        return;
+      }
+
+      updatePersonalInfo("summary", data.text);
+      const providerInfo = data.provider ? ` using ${data.provider}` : "";
+      setSuccess(`Professional summary generated${providerInfo}!`);
+      setTimeout(() => setSuccess(""), 4000);
+    } catch {
+      setError("Error generating summary from profile.");
+    } finally {
+      setAiLoading(null);
+    }
+  }
+
+  async function handleAISuggestSkills() {
+    try {
+      setAiLoading("suggest-skills");
+      setError("");
+
+      const response = await fetch("/api/ai/enhance", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "suggest_skills",
+          jobTitle: personalInfo.jobTitle || "Software Engineer",
+          existingSkills: skills.map((s) => s.name).filter(Boolean),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success || !Array.isArray(data.skills)) {
+        setError(data.message || "Failed to suggest skills.");
+        return;
+      }
+
+      const newSkills: Skill[] = data.skills.map((skillName: string) => ({
+        id: generateUniqueId(),
+        name: skillName,
+        level: "",
+      }));
+
+      setSkills((previous) => [...previous, ...newSkills]);
+      const providerInfo = data.provider ? ` using ${data.provider}` : "";
+      setSuccess(`Added ${newSkills.length} suggested skills${providerInfo}!`);
+      setTimeout(() => setSuccess(""), 4000);
+    } catch {
+      setError("Error fetching skill suggestions.");
     } finally {
       setAiLoading(null);
     }
@@ -782,32 +883,52 @@ export default function EditCVPage() {
                 ))}
 
                 <div className="sm:col-span-2">
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
                       Professional Summary
                     </label>
-                    <button
-                      type="button"
-                      disabled={aiLoading === "summary"}
-                      onClick={() =>
-                        handleAIEnhance(
-                          personalInfo.summary || "",
-                          "summary",
-                          (enhanced) => updatePersonalInfo("summary", enhanced),
-                          "summary"
-                        )
-                      }
-                      className="px-3 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
-                    >
-                      {aiLoading === "summary" ? (
-                        <>
-                          <div className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent" />
-                          <span>AI Improving...</span>
-                        </>
-                      ) : (
-                        <span>✨ Enhance Summary with AI</span>
-                      )}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={aiLoading === "summary-generate"}
+                        onClick={handleAIGenerateSummary}
+                        title="Generate summary automatically based on your job title, experience & skills"
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {aiLoading === "summary-generate" ? (
+                          <>
+                            <div className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+                            <span>Generating...</span>
+                          </>
+                        ) : (
+                          <span>🤖 Auto-Generate</span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={aiLoading === "summary"}
+                        onClick={() =>
+                          handleAIEnhance(
+                            personalInfo.summary || "",
+                            "summary",
+                            (enhanced) => updatePersonalInfo("summary", enhanced),
+                            "summary"
+                          )
+                        }
+                        title="Polish and improve your current written summary"
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {aiLoading === "summary" ? (
+                          <>
+                            <div className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent" />
+                            <span>Improving...</span>
+                          </>
+                        ) : (
+                          <span>✨ AI Enhance</span>
+                        )}
+                      </button>
+                    </div>
                   </div>
                   <textarea
                     value={personalInfo.summary || ""}
@@ -899,7 +1020,8 @@ export default function EditCVPage() {
                                 item.description || "",
                                 "experience",
                                 (enhanced) => updateExperience(index, "description", enhanced),
-                                `exp-${index}`
+                                `exp-${index}`,
+                                { position: item.position, company: item.company }
                               )
                             }
                             className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition flex items-center gap-1 disabled:opacity-50"
@@ -998,18 +1120,35 @@ export default function EditCVPage() {
 
             {/* Skills Card */}
             <section className="rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl backdrop-blur-xl">
-              <div className="mb-5 flex items-center justify-between">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   <span>⚡</span>
                   <span>Skills</span>
                 </h2>
-                <button
-                  type="button"
-                  onClick={addSkill}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md transition"
-                >
-                  + Add Skill
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={aiLoading === "suggest-skills"}
+                    onClick={handleAISuggestSkills}
+                    className="px-3 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 font-semibold text-xs transition flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {aiLoading === "suggest-skills" ? (
+                      <>
+                        <div className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent" />
+                        <span>Suggesting...</span>
+                      </>
+                    ) : (
+                      <span>✨ AI Suggest Skills</span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addSkill}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-md transition"
+                  >
+                    + Add Skill
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-3">
@@ -1106,7 +1245,8 @@ export default function EditCVPage() {
                                 item.description || "",
                                 "project",
                                 (enhanced) => updateProject(index, "description", enhanced),
-                                `proj-${index}`
+                                `proj-${index}`,
+                                { projectName: item.name, technologies: item.technologies }
                               )
                             }
                             className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition flex items-center gap-1 disabled:opacity-50"
