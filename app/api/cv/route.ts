@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/lib/auth";
 import { db } from "@/app/lib/db";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {

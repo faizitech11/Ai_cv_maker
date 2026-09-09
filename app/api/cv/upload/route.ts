@@ -272,13 +272,14 @@ export async function POST(request: Request) {
       {
         success: true,
         message: structureResult.success
-          ? "CV uploaded and information extracted successfully"
+          ? `CV uploaded and extracted successfully using ${structureResult.provider || "ATS Engine"}`
           : "CV uploaded and text extracted, but structured parsing could not be completed",
         cv,
         extractedText,
         parsedData,
         parsingSuccess: structureResult.success,
         parsingMessage: structureResult.message,
+        provider: structureResult.provider,
       },
       { status: 201 }
     );
